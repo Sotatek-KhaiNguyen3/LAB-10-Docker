@@ -80,12 +80,11 @@ docker run --rm hello-world
 END
 ```
 
-### **Bước 6: Pull các Docker images cần thiết**
+### **Bước 6: Pull các Docker images cần thiết (MySQL)**
 ```bash
-# Database
+# Database - DÙNG MYSQL
 docker pull mysql:8
-docker pull postgres:15-alpine
-docker pull adminer:latest
+docker pull phpmyadmin/phpmyadmin:latest  # GUI quản lý MySQL
 
 # Backend base images
 docker pull python:3.11-alpine
@@ -122,11 +121,74 @@ mkdir -p ~/docker-lab/{frontend,backends,shared,scripts,stacks}
 # Tạo thư mục cho từng backend
 mkdir -p ~/docker-lab/backends/{python,nodejs,java,php,dotnet,nestjs}
 
-# Thư mục shared
-mkdir -p ~/docker-lab/shared/{nginx,mysql,postgres,secrets}
+# Thư mục shared - CHỈ MYSQL
+mkdir -p ~/docker-lab/shared/{nginx,mysql,secrets}
+
+# Tạo thư mục init scripts cho MySQL
+mkdir -p ~/docker-lab/shared/mysql/init
 ```
 
-### **Bước 9: Tạo alias và shell helpers**
+### **Bước 9: Tạo MySQL init script**
+```bash
+# Tạo file init database cho app notes
+cat > ~/docker-lab/shared/mysql/init/01-init.sql <<'EOF'
+-- Tạo database notesdb
+CREATE DATABASE IF NOT EXISTS notesdb;
+USE notesdb;
+
+-- Tạo bảng notes
+CREATE TABLE IF NOT EXISTS notes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    content TEXT,
+    status ENUM('pending', 'in_progress', 'done') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Tạo index
+CREATE INDEX idx_status ON notes(status);
+
+-- Insert sample data
+INSERT INTO notes (title, content, status) VALUES
+('Mua sữa', 'Mua sữa ở siêu thị', 'pending'),
+('Làm bài tập Docker', 'Hoàn thành lab Docker Swarm', 'in_progress'),
+('Họp team', 'Họp lúc 14:00', 'done');
+
+-- Tạo user cho ứng dụng (không dùng root)
+CREATE USER IF NOT EXISTS 'notesuser'@'%' IDENTIFIED BY 'notespass';
+GRANT ALL PRIVILEGES ON notesdb.* TO 'notesuser'@'%';
+FLUSH PRIVILEGES;
+EOF
+
+# Tạo file cấu hình MySQL
+cat > ~/docker-lab/shared/mysql/my.cnf <<'EOF'
+[mysqld]
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+default-authentication-plugin=mysql_native_password
+max_connections=100
+wait_timeout=28800
+interactive_timeout=28800
+
+[mysql]
+default-character-set = utf8mb4
+
+[client]
+default-character-set = utf8mb4
+EOF
+```
+
+### **Bước 10: Kiểm tra images đã pull**
+```bash
+# Kiểm tra MySQL image đã pull
+docker images | grep mysql
+
+# Kết quả mong đợi:
+# mysql      8      xxxxx   1 phút trước
+```
+
+### **Bước 11: Tạo alias và shell helpers**
 ```bash
 # Tạo file .bash_aliases
 cat >> ~/.bash_aliases <<'EOF'
@@ -161,7 +223,7 @@ EOF
 source ~/.bash_aliases
 ```
 
-### **Bước 10: Tạo script kiểm tra**
+### **Bước 12: Tạo script kiểm tra**
 ```bash
 # Tạo file check-env.sh
 cat > ~/check-env.sh <<'EOF'
@@ -183,6 +245,30 @@ ping -c 1 docker3 >/dev/null 2>&1 && echo "✓ docker3 reachable" || echo "✗ d
 EOF
 
 chmod +x ~/check-env.sh
+
+# Thêm kiểm tra MySQL image
+cat >> ~/check-env.sh <<'EOF'
+
+echo "7. MySQL Image check:"
+docker images | grep mysql || echo "MySQL image not found"
+EOF
+```
+
+### **Bước 13: Chạy test MySQL container**
+```bash
+# Test MySQL container chạy được không
+docker run --rm -d \
+  --name test-mysql \
+  -e MYSQL_ROOT_PASSWORD=rootpass \
+  -e MYSQL_DATABASE=testdb \
+  mysql:8
+
+# Kiểm tra
+sleep 10
+docker logs test-mysql | grep "ready for connections"
+
+# Dọn dẹp
+docker stop test-mysql
 ```
 
 ## **KIỂM TRA CUỐI CÙNG:**
