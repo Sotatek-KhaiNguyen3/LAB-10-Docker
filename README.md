@@ -2008,3 +2008,589 @@ tree -L 3
 
 
 **Xong Phase 3!** Đã chuẩn bị source code cho Python stack đầu tiên. Tiếp theo Phase 4: Build và test Python stack.
+
+---
+
+# **PHASE 5: BUILD VÀ TEST PYTHON STACK**
+
+
+
+## **BƯỚC 1: BUILD IMAGES**
+
+
+
+### **1.1 Build React Frontend Image**
+
+```bash
+
+# Trên docker1
+
+cd ~/docker-lab/frontend
+
+
+
+# Cài dependencies và build React app
+
+npm install
+
+
+
+# Build Docker image
+
+docker build -t notes-frontend:latest .
+
+
+
+# Kiểm tra image đã build
+
+docker images | grep notes-frontend
+
+```
+
+
+
+### **1.2 Build Python Backend Image**
+
+```bash
+
+# Build Python backend
+
+cd ~/docker-lab/backends/python
+
+
+
+# Build Docker image
+
+docker build -t notes-backend-python:latest .
+
+
+
+# Kiểm tra
+
+docker images | grep notes-backend-python
+
+```
+
+
+
+## **BƯỚC 2: TEST VỚI DOCKER COMPOSE (DEV MODE)**
+
+
+
+### **2.1 Chạy stack với docker-compose**
+
+```bash
+
+cd ~/docker-lab/backends/python
+
+
+
+# Chạy services
+
+docker-compose up -d
+
+
+
+# Kiểm tra services đang chạy
+
+docker-compose ps
+
+
+
+# Kết quả mong đợi:
+
+# NAME                     COMMAND                  SERVICE             STATUS              PORTS
+
+# notes-backend-python     "python app.py"          backend             running             0.0.0.0:5001->5000/tcp
+
+# notes-mysql-python       "docker-entrypoint.s…"   mysql               running             0.0.0.0:3307->3306/tcp
+
+# notes-phpmyadmin-python  "/docker-entrypoint.…"   phpmyadmin          running             0.0.0.0:8081->80/tcp
+
+```
+
+
+
+### **2.2 Kiểm tra logs**
+
+```bash
+
+# Xem logs MySQL (kiểm tra init script chạy)
+
+docker-compose logs mysql | tail -20
+
+
+
+# Xem logs Python backend
+
+docker-compose logs backend | tail -20
+
+
+
+# Xem tất cả logs
+
+docker-compose logs -f
+
+```
+
+
+
+### **2.3 Kiểm tra database init**
+
+```bash
+
+# Kiểm tra MySQL container
+
+docker exec -it notes-mysql-python mysql -unotes_app -pAppPassword123! -D notesdb -e "SHOW TABLES;"
+
+
+
+# Kết quả mong đợi:
+
+# +-------------------+
+
+# | Tables_in_notesdb |
+
+# +-------------------+
+
+# | notes             |
+
+# +-------------------+
+
+
+
+# Kiểm tra dữ liệu mẫu
+
+docker exec -it notes-mysql-python mysql -unotes_app -pAppPassword123! -D notesdb \
+
+  -e "SELECT id, title, status FROM notes;"
+
+```
+
+
+
+## **BƯỚC 3: TEST API ENDPOINTS**
+
+
+
+### **3.1 Test Python Backend API**
+
+```bash
+
+# Health check
+
+curl http://localhost:5001/api/health
+
+
+
+# Kết quả mong đợi:
+
+# {"status":"healthy","service":"Python Backend"}
+
+
+
+# Get all notes
+
+curl http://localhost:5001/api/notes
+
+
+
+# Create new note
+
+curl -X POST http://localhost:5001/api/notes \
+
+  -H "Content-Type: application/json" \
+
+  -d '{"title":"Test Note from API","content":"This is a test note","status":"pending"}'
+
+
+
+# Update note status
+
+curl -X PUT http://localhost:5001/api/notes/1/status \
+
+  -H "Content-Type: application/json" \
+
+  -d '{"status":"in_progress"}'
+
+```
+
+
+
+### **3.2 Test Frontend**
+
+```bash
+
+# Build và chạy frontend riêng để test
+
+cd ~/docker-lab/frontend
+
+
+
+# Chạy React dev server (tạm thời)
+
+npm start &
+
+# Hoặc truy cập trực tiếp qua container
+
+```
+
+
+
+## **BƯỚC 4: DEPLOY LÊN DOCKER SWARM**
+
+
+
+### **4.1 Đẩy images đến các nodes**
+
+```bash
+
+# Cách 1: Build trên từng node (đơn giản cho lab)
+
+# Trên docker2 và docker3, cũng build images tương tự
+
+# Hoặc dùng Docker registry (phức tạp hơn)
+
+
+
+# SSH vào docker2 và build
+
+ssh khai@docker2 "cd ~/docker-lab/frontend && docker build -t notes-frontend:latest ."
+
+ssh khai@docker2 "cd ~/docker-lab/backends/python && docker build -t notes-backend-python:latest ."
+
+
+
+# SSH vào docker3 và build
+
+ssh khai@docker3 "cd ~/docker-lab/frontend && docker build -t notes-frontend:latest ."
+
+ssh khai@docker3 "cd ~/docker-lab/backends/python && docker build -t notes-backend-python:latest ."
+
+```
+
+
+
+### **4.2 Deploy stack lên Swarm**
+
+```bash
+
+# Trên docker1 (manager)
+
+cd ~/docker-lab/backends/python
+
+
+
+# Deploy stack
+
+docker stack deploy -c docker-stack.yml notes-python
+
+
+
+# Kiểm tra services
+
+docker stack services notes-python
+
+
+
+# Kiểm tra tasks phân bổ
+
+docker service ps notes-python_backend
+
+docker service ps notes-python_frontend
+
+docker service ps notes-python_mysql
+
+```
+
+
+
+### **4.3 Kiểm tra Swarm deployment**
+
+```bash
+
+# Xem tất cả services trong stack
+
+docker stack ps notes-python
+
+
+
+# Xem logs của service
+
+docker service logs notes-python_backend
+
+
+
+# Scale backend service
+
+docker service scale notes-python_backend=5
+
+
+
+# Kiểm tra phân bổ mới
+
+docker service ps notes-python_backend
+
+```
+
+
+
+## **BƯỚC 5: KIỂM TRA TRUY CẬP**
+
+
+
+### **5.1 Truy cập ứng dụng**
+
+```bash
+
+# Frontend (React)
+
+echo "Frontend URL: http://192.168.230.190:5000"
+
+echo "Backend API: http://192.168.230.190:5000/api/health"
+
+echo "phpMyAdmin: http://192.168.230.190:8081"
+
+```
+
+
+
+### **5.2 Test từ browser**
+
+```
+
+1. Mở browser, truy cập: http://192.168.230.190:5000
+
+2. Kiểm tra có hiển thị "Notes App"
+
+3. Thêm, sửa, xóa notes
+
+4. Kiểm tra status changes
+
+```
+
+
+
+### **5.3 Test load balancing**
+
+```bash
+
+# Test multiple requests để thấy load balancing
+
+for i in {1..10}; do
+
+  curl -s http://192.168.230.190:5000/api/health | grep -o '"service":".*"' 
+
+done | sort | uniq -c
+
+```
+
+
+
+## **BƯỚC 6: TROUBLESHOOTING**
+
+
+
+### **Nếu có lỗi:**
+
+```bash
+
+# 1. Kiểm tra network
+
+docker network ls | grep notes-network-overlay
+
+
+
+# 2. Kiểm tra volumes
+
+docker volume ls | grep mysql
+
+
+
+# 3. Kiểm tra các nodes có images
+
+ssh docker2 "docker images | grep notes-"
+
+ssh docker3 "docker images | grep notes-"
+
+
+
+# 4. Xem detailed logs
+
+docker service logs --tail 100 notes-python_backend
+
+docker service logs --tail 100 notes-python_mysql
+
+
+
+# 5. Kiểm tra service health
+
+docker service inspect --pretty notes-python_backend
+
+```
+
+
+
+### **Common issues:**
+
+```bash
+
+# Nếu service không start
+
+docker service update --force notes-python_backend
+
+
+
+# Nếu network không tạo
+
+docker network create -d overlay --attachable notes-network-overlay
+
+
+
+# Nếu volume không tồn tại
+
+docker volume create mysql_data_python
+
+```
+
+
+
+## **BƯỚC 7: CLEANUP (nếu cần)**
+
+
+
+### **7.1 Dừng stack**
+
+```bash
+
+# Remove stack
+
+docker stack rm notes-python
+
+
+
+# Dừng docker-compose
+
+cd ~/docker-lab/backends/python
+
+docker-compose down
+
+
+
+# Xóa volumes (cẩn thận - mất data)
+
+docker-compose down -v
+
+```
+
+
+
+### **7.2 Xóa images**
+
+```bash
+
+# Xóa images cục bộ
+
+docker rmi notes-frontend:latest notes-backend-python:latest
+
+
+
+# Xóa trên tất cả nodes
+
+ssh docker2 "docker rmi notes-frontend:latest notes-backend-python:latest"
+
+ssh docker3 "docker rmi notes-frontend:latest notes-backend-python:latest"
+
+```
+
+
+
+## **KIỂM TRA CUỐI CÙNG:**
+
+
+
+### **Tạo test script**
+
+```bash
+
+cat > ~/test-python-stack.sh <<'EOF'
+
+#!/bin/bash
+
+echo "=== Testing Python Stack ==="
+
+echo ""
+
+
+
+echo "1. Docker Swarm Status:"
+
+docker node ls
+
+echo ""
+
+
+
+echo "2. Stack Services:"
+
+docker stack services notes-python 2>/dev/null || echo "Stack not deployed yet"
+
+echo ""
+
+
+
+echo "3. API Health Check:"
+
+curl -s http://localhost:5001/api/health 2>/dev/null || echo "API not reachable"
+
+echo ""
+
+
+
+echo "4. Frontend Access:"
+
+echo "URL: http://192.168.230.190:5000"
+
+echo ""
+
+
+
+echo "5. Database Connection:"
+
+docker exec notes-mysql-python mysql -unotes_app -pAppPassword123! -D notesdb \
+
+  -e "SELECT COUNT(*) as note_count FROM notes;" 2>/dev/null || echo "Database not reachable"
+
+EOF
+
+
+
+chmod +x ~/test-python-stack.sh
+
+```
+
+
+
+**Chạy test:**
+
+```bash
+
+./test-python-stack.sh
+
+```
+
+
+
+## **KẾT QUẢ THÀNH CÔNG KHI:**
+
+- ✅ `docker stack services notes-python` hiện 3 services
+
+- ✅ Frontend truy cập được qua browser
+
+- ✅ API trả về `{"status":"healthy"}`
+
+- ✅ Database có dữ liệu mẫu
+
+
+
+**Xong Phase 5!** Bạn đã deploy thành công Python stack đầu tiên trên Docker Swarm!
