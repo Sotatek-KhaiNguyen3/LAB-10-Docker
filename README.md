@@ -530,3 +530,1481 @@ docker node ls
 - ✅ `app-network` tạo thành công
 
 **Xong Phase 2!** Tiếp theo Phase 3: Chuẩn bị source code cho lab.
+
+---
+
+# **PHASE 3: CHUẨN BỊ SOURCE CODE CHO LAB**
+
+
+
+## **BƯỚC 1: TRÊN DOCKER1 (MANAGER)**
+
+
+
+### **1.1 Tạo cấu trúc thư mục đầy đủ**
+
+```bash
+
+# Đảm bảo đang ở home directory
+
+cd ~
+
+
+
+# Tạo cấu trúc thư mục chính
+
+mkdir -p docker-lab/{frontend,backends,shared,scripts,stacks}
+
+
+
+# Tạo thư mục cho từng backend stack
+
+mkdir -p docker-lab/backends/{python,nodejs,java,php,dotnet,nestjs}
+
+
+
+# Thư mục shared resources
+
+mkdir -p docker-lab/shared/{nginx,mysql,secrets}
+
+
+
+# Tạo init scripts cho MySQL
+
+mkdir -p docker-lab/shared/mysql/init
+
+```
+
+
+
+### **1.2 Tạo React Frontend cơ bản**
+
+```bash
+
+# Tạo package.json cho React
+
+cat > ~/docker-lab/frontend/package.json <<'EOF'
+
+{
+
+  "name": "notes-app-frontend",
+
+  "version": "1.0.0",
+
+  "private": true,
+
+  "dependencies": {
+
+    "react": "^18.2.0",
+
+    "react-dom": "^18.2.0",
+
+    "react-scripts": "5.0.1",
+
+    "axios": "^1.5.0"
+
+  },
+
+  "scripts": {
+
+    "start": "react-scripts start",
+
+    "build": "react-scripts build",
+
+    "test": "react-scripts test",
+
+    "eject": "react-scripts eject"
+
+  },
+
+  "proxy": "http://backend:5000"
+
+}
+
+EOF
+
+
+
+# Tạo Dockerfile cho React
+
+cat > ~/docker-lab/frontend/Dockerfile <<'EOF'
+
+# Build stage
+
+FROM node:18-alpine AS build
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm ci --only=production
+
+COPY . .
+
+RUN npm run build
+
+
+
+# Production stage
+
+FROM nginx:alpine
+
+COPY --from=build /app/build /usr/share/nginx/html
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
+
+EOF
+
+
+
+# Tạo nginx config
+
+cat > ~/docker-lab/frontend/nginx.conf <<'EOF'
+
+server {
+
+    listen 80;
+
+    server_name localhost;
+
+    
+
+    location / {
+
+        root /usr/share/nginx/html;
+
+        index index.html index.htm;
+
+        try_files $uri $uri/ /index.html;
+
+    }
+
+    
+
+    # Proxy API requests to backend
+
+    location /api {
+
+        rewrite ^/api/(.*) /$1 break;
+
+        proxy_pass http://backend:5000;
+
+        proxy_set_header Host $host;
+
+        proxy_set_header X-Real-IP $remote_addr;
+
+    }
+
+}
+
+EOF
+
+
+
+# Tạo React app đơn giản
+
+cat > ~/docker-lab/frontend/public/index.html <<'EOF'
+
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+    <meta charset="utf-8" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Notes App</title>
+
+</head>
+
+<body>
+
+    <div id="root"></div>
+
+</body>
+
+</html>
+
+EOF
+
+
+
+# Tạo React component cơ bản
+
+mkdir -p ~/docker-lab/frontend/src
+
+cat > ~/docker-lab/frontend/src/App.js <<'EOF'
+
+import React, { useState, useEffect } from 'react';
+
+import axios from 'axios';
+
+
+
+function App() {
+
+  const [notes, setNotes] = useState([]);
+
+  const [newNote, setNewNote] = useState({ title: '', content: '' });
+
+
+
+  useEffect(() => {
+
+    fetchNotes();
+
+  }, []);
+
+
+
+  const fetchNotes = async () => {
+
+    try {
+
+      const response = await axios.get('/api/notes');
+
+      setNotes(response.data);
+
+    } catch (error) {
+
+      console.error('Error fetching notes:', error);
+
+    }
+
+  };
+
+
+
+  const addNote = async () => {
+
+    try {
+
+      await axios.post('/api/notes', newNote);
+
+      setNewNote({ title: '', content: '' });
+
+      fetchNotes();
+
+    } catch (error) {
+
+      console.error('Error adding note:', error);
+
+    }
+
+  };
+
+
+
+  const deleteNote = async (id) => {
+
+    try {
+
+      await axios.delete(`/api/notes/${id}`);
+
+      fetchNotes();
+
+    } catch (error) {
+
+      console.error('Error deleting note:', error);
+
+    }
+
+  };
+
+
+
+  return (
+
+    <div style={{ padding: '20px' }}>
+
+      <h1>Notes App</h1>
+
+      
+
+      <div>
+
+        <h2>Add New Note</h2>
+
+        <input
+
+          type="text"
+
+          placeholder="Title"
+
+          value={newNote.title}
+
+          onChange={(e) => setNewNote({...newNote, title: e.target.value})}
+
+        />
+
+        <input
+
+          type="text"
+
+          placeholder="Content"
+
+          value={newNote.content}
+
+          onChange={(e) => setNewNote({...newNote, content: e.target.value})}
+
+        />
+
+        <button onClick={addNote}>Add Note</button>
+
+      </div>
+
+
+
+      <div>
+
+        <h2>Notes List</h2>
+
+        {notes.length === 0 ? (
+
+          <p>No notes yet. Add one above!</p>
+
+        ) : (
+
+          <ul>
+
+            {notes.map(note => (
+
+              <li key={note.id} style={{ marginBottom: '10px', border: '1px solid #ccc', padding: '10px' }}>
+
+                <h3>{note.title}</h3>
+
+                <p>{note.content}</p>
+
+                <p>Status: {note.status}</p>
+
+                <button onClick={() => deleteNote(note.id)}>Delete</button>
+
+              </li>
+
+            ))}
+
+          </ul>
+
+        )}
+
+      </div>
+
+    </div>
+
+  );
+
+}
+
+
+
+export default App;
+
+EOF
+
+
+
+cat > ~/docker-lab/frontend/src/index.js <<'EOF'
+
+import React from 'react';
+
+import ReactDOM from 'react-dom/client';
+
+import App from './App';
+
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+
+root.render(
+
+  <React.StrictMode>
+
+    <App />
+
+  </React.StrictMode>
+
+);
+
+EOF
+
+```
+
+
+
+### **1.3 Tạo MySQL Init Scripts**
+
+```bash
+
+# Tạo database init script
+
+cat > ~/docker-lab/shared/mysql/init/01-init.sql <<'EOF'
+
+-- Create database
+
+CREATE DATABASE IF NOT EXISTS notesdb
+
+CHARACTER SET utf8mb4
+
+COLLATE utf8mb4_unicode_ci;
+
+
+
+-- Create app user
+
+CREATE USER IF NOT EXISTS 'notes_app'@'%' IDENTIFIED BY 'AppPassword123!';
+
+GRANT ALL PRIVILEGES ON notesdb.* TO 'notes_app'@'%';
+
+FLUSH PRIVILEGES;
+
+
+
+-- Use database
+
+USE notesdb;
+
+
+
+-- Create notes table
+
+CREATE TABLE IF NOT EXISTS notes (
+
+    id INT AUTO_INCREMENT PRIMARY KEY,
+
+    title VARCHAR(255) NOT NULL,
+
+    content TEXT,
+
+    status ENUM('pending', 'in_progress', 'done') DEFAULT 'pending',
+
+    is_completed BOOLEAN DEFAULT FALSE,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_status (status),
+
+    INDEX idx_created (created_at)
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+
+-- Insert sample data
+
+INSERT INTO notes (title, content, status, is_completed) VALUES
+
+('Buy groceries', 'Milk, Eggs, Bread, Vegetables', 'pending', FALSE),
+
+('Complete Docker Lab', 'Deploy 6 backend stacks with React FE', 'in_progress', FALSE),
+
+('Submit weekly report', 'Prepare slides and Q4 data', 'done', TRUE),
+
+('Meeting with DevOps team', 'Discuss CI/CD pipeline', 'in_progress', FALSE),
+
+('Fix login page bug', 'Email validation not working', 'pending', FALSE),
+
+('Deploy to production', 'Deploy to main server', 'done', TRUE);
+
+
+
+-- Update completed status
+
+UPDATE notes SET is_completed = TRUE WHERE status = 'done';
+
+EOF
+
+```
+
+
+
+## **BƯỚC 2: TẠO BACKEND PYTHON (LAB ĐẦU TIÊN)**
+
+
+
+### **2.1 Tạo Python Backend cơ bản**
+
+```bash
+
+# Tạo requirements.txt
+
+cat > ~/docker-lab/backends/python/requirements.txt <<'EOF'
+
+Flask==2.3.3
+
+Flask-CORS==4.0.0
+
+mysql-connector-python==8.1.0
+
+python-dotenv==1.0.0
+
+EOF
+
+
+
+# Tạo Dockerfile cho Python
+
+cat > ~/docker-lab/backends/python/Dockerfile <<'EOF'
+
+FROM python:3.11-alpine
+
+WORKDIR /app
+
+
+
+# Install system dependencies for mysql-connector
+
+RUN apk add --no-cache gcc musl-dev mariadb-connector-c-dev
+
+
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+
+
+COPY . .
+
+
+
+EXPOSE 5000
+
+CMD ["python", "app.py"]
+
+EOF
+
+
+
+# Tạo Python app (Flask)
+
+cat > ~/docker-lab/backends/python/app.py <<'EOF'
+
+from flask import Flask, jsonify, request
+
+from flask_cors import CORS
+
+import mysql.connector
+
+import os
+
+from datetime import datetime
+
+
+
+app = Flask(__name__)
+
+CORS(app)
+
+
+
+# Database configuration
+
+DB_CONFIG = {
+
+    'host': os.getenv('DB_HOST', 'mysql'),
+
+    'user': os.getenv('DB_USER', 'notes_app'),
+
+    'password': os.getenv('DB_PASSWORD', 'AppPassword123!'),
+
+    'database': os.getenv('DB_NAME', 'notesdb'),
+
+    'port': os.getenv('DB_PORT', 3306)
+
+}
+
+
+
+def get_db_connection():
+
+    try:
+
+        conn = mysql.connector.connect(**DB_CONFIG)
+
+        return conn
+
+    except mysql.connector.Error as err:
+
+        print(f"Database connection error: {err}")
+
+        return None
+
+
+
+@app.route('/api/health', methods=['GET'])
+
+def health_check():
+
+    return jsonify({'status': 'healthy', 'service': 'Python Backend'})
+
+
+
+@app.route('/api/notes', methods=['GET'])
+
+def get_notes():
+
+    conn = get_db_connection()
+
+    if not conn:
+
+        return jsonify({'error': 'Database connection failed'}), 500
+
+    
+
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute('SELECT * FROM notes ORDER BY created_at DESC')
+
+    notes = cursor.fetchall()
+
+    
+
+    cursor.close()
+
+    conn.close()
+
+    
+
+    return jsonify(notes)
+
+
+
+@app.route('/api/notes/<int:note_id>', methods=['GET'])
+
+def get_note(note_id):
+
+    conn = get_db_connection()
+
+    if not conn:
+
+        return jsonify({'error': 'Database connection failed'}), 500
+
+    
+
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute('SELECT * FROM notes WHERE id = %s', (note_id,))
+
+    note = cursor.fetchone()
+
+    
+
+    cursor.close()
+
+    conn.close()
+
+    
+
+    if note:
+
+        return jsonify(note)
+
+    return jsonify({'error': 'Note not found'}), 404
+
+
+
+@app.route('/api/notes', methods=['POST'])
+
+def create_note():
+
+    data = request.json
+
+    if not data or 'title' not in data:
+
+        return jsonify({'error': 'Title is required'}), 400
+
+    
+
+    conn = get_db_connection()
+
+    if not conn:
+
+        return jsonify({'error': 'Database connection failed'}), 500
+
+    
+
+    cursor = conn.cursor()
+
+    query = '''
+
+        INSERT INTO notes (title, content, status) 
+
+        VALUES (%s, %s, %s)
+
+    '''
+
+    values = (
+
+        data.get('title'),
+
+        data.get('content', ''),
+
+        data.get('status', 'pending')
+
+    )
+
+    
+
+    cursor.execute(query, values)
+
+    conn.commit()
+
+    note_id = cursor.lastrowid
+
+    
+
+    cursor.close()
+
+    conn.close()
+
+    
+
+    return jsonify({'id': note_id, 'message': 'Note created successfully'}), 201
+
+
+
+@app.route('/api/notes/<int:note_id>', methods=['PUT'])
+
+def update_note(note_id):
+
+    data = request.json
+
+    conn = get_db_connection()
+
+    if not conn:
+
+        return jsonify({'error': 'Database connection failed'}), 500
+
+    
+
+    cursor = conn.cursor()
+
+    
+
+    # Build dynamic update query
+
+    updates = []
+
+    values = []
+
+    
+
+    if 'title' in data:
+
+        updates.append('title = %s')
+
+        values.append(data['title'])
+
+    if 'content' in data:
+
+        updates.append('content = %s')
+
+        values.append(data['content'])
+
+    if 'status' in data:
+
+        updates.append('status = %s')
+
+        updates.append('is_completed = %s')
+
+        values.append(data['status'])
+
+        values.append(data['status'] == 'done')
+
+    
+
+    if not updates:
+
+        return jsonify({'error': 'No fields to update'}), 400
+
+    
+
+    values.append(note_id)
+
+    query = f'UPDATE notes SET {", ".join(updates)} WHERE id = %s'
+
+    
+
+    cursor.execute(query, values)
+
+    conn.commit()
+
+    affected_rows = cursor.rowcount
+
+    
+
+    cursor.close()
+
+    conn.close()
+
+    
+
+    if affected_rows > 0:
+
+        return jsonify({'message': 'Note updated successfully'})
+
+    return jsonify({'error': 'Note not found'}), 404
+
+
+
+@app.route('/api/notes/<int:note_id>', methods=['DELETE'])
+
+def delete_note(note_id):
+
+    conn = get_db_connection()
+
+    if not conn:
+
+        return jsonify({'error': 'Database connection failed'}), 500
+
+    
+
+    cursor = conn.cursor()
+
+    cursor.execute('DELETE FROM notes WHERE id = %s', (note_id,))
+
+    conn.commit()
+
+    affected_rows = cursor.rowcount
+
+    
+
+    cursor.close()
+
+    conn.close()
+
+    
+
+    if affected_rows > 0:
+
+        return jsonify({'message': 'Note deleted successfully'})
+
+    return jsonify({'error': 'Note not found'}), 404
+
+
+
+@app.route('/api/notes/<int:note_id>/status', methods=['PUT'])
+
+def update_note_status(note_id):
+
+    data = request.json
+
+    if 'status' not in data:
+
+        return jsonify({'error': 'Status is required'}), 400
+
+    
+
+    status = data['status']
+
+    if status not in ['pending', 'in_progress', 'done']:
+
+        return jsonify({'error': 'Invalid status'}), 400
+
+    
+
+    conn = get_db_connection()
+
+    if not conn:
+
+        return jsonify({'error': 'Database connection failed'}), 500
+
+    
+
+    cursor = conn.cursor()
+
+    query = '''
+
+        UPDATE notes 
+
+        SET status = %s, is_completed = %s 
+
+        WHERE id = %s
+
+    '''
+
+    values = (status, status == 'done', note_id)
+
+    
+
+    cursor.execute(query, values)
+
+    conn.commit()
+
+    affected_rows = cursor.rowcount
+
+    
+
+    cursor.close()
+
+    conn.close()
+
+    
+
+    if affected_rows > 0:
+
+        return jsonify({'message': 'Status updated successfully'})
+
+    return jsonify({'error': 'Note not found'}), 404
+
+
+
+if __name__ == '__main__':
+
+    app.run(host='0.0.0.0', port=5000, debug=True)
+
+EOF
+
+
+
+# Tạo .env file cho Python
+
+cat > ~/docker-lab/backends/python/.env <<'EOF'
+
+DB_HOST=mysql
+
+DB_PORT=3306
+
+DB_USER=notes_app
+
+DB_PASSWORD=AppPassword123!
+
+DB_NAME=notesdb
+
+FLASK_ENV=development
+
+EOF
+
+```
+
+
+
+### **2.2 Tạo docker-compose.yml cho Python stack**
+
+```bash
+
+cat > ~/docker-lab/backends/python/docker-compose.yml <<'EOF'
+
+version: '3.8'
+
+
+
+services:
+
+  # MySQL Database
+
+  mysql:
+
+    image: mysql:8
+
+    container_name: notes-mysql-python
+
+    restart: unless-stopped
+
+    environment:
+
+      MYSQL_ROOT_PASSWORD: RootPass123!
+
+      MYSQL_DATABASE: notesdb
+
+    volumes:
+
+      - mysql_data_python:/var/lib/mysql
+
+      - ../../shared/mysql/init:/docker-entrypoint-initdb.d
+
+    ports:
+
+      - "3307:3306"  # Different port for each stack
+
+    networks:
+
+      - notes-network
+
+    healthcheck:
+
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+
+      interval: 10s
+
+      timeout: 5s
+
+      retries: 5
+
+
+
+  # Python Backend
+
+  backend:
+
+    build: .
+
+    container_name: notes-backend-python
+
+    restart: unless-stopped
+
+    depends_on:
+
+      mysql:
+
+        condition: service_healthy
+
+    environment:
+
+      DB_HOST: mysql
+
+      DB_USER: notes_app
+
+      DB_PASSWORD: AppPassword123!
+
+      DB_NAME: notesdb
+
+      DB_PORT: 3306
+
+    ports:
+
+      - "5001:5000"  # Different port for each stack
+
+    volumes:
+
+      - ./:/app
+
+    networks:
+
+      - notes-network
+
+    healthcheck:
+
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+
+      interval: 30s
+
+      timeout: 10s
+
+      retries: 3
+
+
+
+  # phpMyAdmin (optional)
+
+  phpmyadmin:
+
+    image: phpmyadmin/phpmyadmin
+
+    container_name: notes-phpmyadmin-python
+
+    restart: unless-stopped
+
+    depends_on:
+
+      - mysql
+
+    environment:
+
+      PMA_HOST: mysql
+
+      PMA_PORT: 3306
+
+      UPLOAD_LIMIT: 100M
+
+    ports:
+
+      - "8081:80"  # Different port for each stack
+
+    networks:
+
+      - notes-network
+
+
+
+volumes:
+
+  mysql_data_python:
+
+
+
+networks:
+
+  notes-network:
+
+    driver: bridge
+
+EOF
+
+```
+
+
+
+### **2.3 Tạo docker-stack.yml cho Swarm deployment**
+
+```bash
+
+cat > ~/docker-lab/backends/python/docker-stack.yml <<'EOF'
+
+version: '3.8'
+
+
+
+services:
+
+  # MySQL Database (1 replica only for data consistency)
+
+  mysql:
+
+    image: mysql:8
+
+    deploy:
+
+      replicas: 1
+
+      placement:
+
+        constraints:
+
+          - node.role == manager
+
+      restart_policy:
+
+        condition: on-failure
+
+        delay: 5s
+
+        max_attempts: 3
+
+    environment:
+
+      MYSQL_ROOT_PASSWORD: RootPass123!
+
+      MYSQL_DATABASE: notesdb
+
+    volumes:
+
+      - mysql_data_python:/var/lib/mysql
+
+      - /home/khai/docker-lab/shared/mysql/init:/docker-entrypoint-initdb.d
+
+    networks:
+
+      - notes-network-overlay
+
+
+
+  # Python Backend (multiple replicas)
+
+  backend:
+
+    image: notes-backend-python:latest
+
+    deploy:
+
+      replicas: 3
+
+      update_config:
+
+        parallelism: 1
+
+        delay: 10s
+
+        order: start-first
+
+      restart_policy:
+
+        condition: on-failure
+
+      placement:
+
+        constraints:
+
+          - node.role == worker
+
+    environment:
+
+      DB_HOST: mysql
+
+      DB_USER: notes_app
+
+      DB_PASSWORD: AppPassword123!
+
+      DB_NAME: notesdb
+
+      DB_PORT: 3306
+
+    networks:
+
+      - notes-network-overlay
+
+
+
+  # Frontend (React)
+
+  frontend:
+
+    image: notes-frontend:latest
+
+    deploy:
+
+      replicas: 2
+
+      update_config:
+
+        parallelism: 1
+
+        delay: 5s
+
+      restart_policy:
+
+        condition: on-failure
+
+    ports:
+
+      - target: 80
+
+        published: 5000
+
+        protocol: tcp
+
+        mode: host
+
+    networks:
+
+      - notes-network-overlay
+
+
+
+volumes:
+
+  mysql_data_python:
+
+    driver: local
+
+
+
+networks:
+
+  notes-network-overlay:
+
+    driver: overlay
+
+    attachable: true
+
+EOF
+
+```
+
+
+
+## **BƯỚC 3: TẠO SCRIPT TIỆN ÍCH**
+
+
+
+### **3.1 Tạo build script**
+
+```bash
+
+cat > ~/docker-lab/scripts/build-python.sh <<'EOF'
+
+#!/bin/bash
+
+echo "=== Building Python Notes App ==="
+
+
+
+# Build backend image
+
+echo "1. Building Python backend..."
+
+cd ~/docker-lab/backends/python
+
+docker build -t notes-backend-python:latest .
+
+
+
+# Build frontend image
+
+echo "2. Building React frontend..."
+
+cd ~/docker-lab/frontend
+
+docker build -t notes-frontend:latest .
+
+
+
+echo "=== Build complete ==="
+
+echo "Backend image: notes-backend-python:latest"
+
+echo "Frontend image: notes-frontend:latest"
+
+EOF
+
+
+
+chmod +x ~/docker-lab/scripts/build-python.sh
+
+```
+
+
+
+### **3.2 Tạo deploy script**
+
+```bash
+
+cat > ~/docker-lab/scripts/deploy-python-stack.sh <<'EOF'
+
+#!/bin/bash
+
+echo "=== Deploying Python Stack to Swarm ==="
+
+
+
+# Build images first
+
+~/docker-lab/scripts/build-python.sh
+
+
+
+# Deploy stack
+
+echo "Deploying stack..."
+
+cd ~/docker-lab/backends/python
+
+docker stack deploy -c docker-stack.yml notes-python
+
+
+
+echo "=== Deployment complete ==="
+
+echo "Check services: docker stack services notes-python"
+
+echo "Check tasks: docker service ps notes-python_backend"
+
+echo ""
+
+echo "Access points:"
+
+echo "- Frontend: http://192.168.230.190:5000"
+
+echo "- Backend API: http://192.168.230.190:5000/api/health"
+
+EOF
+
+
+
+chmod +x ~/docker-lab/scripts/deploy-python-stack.sh
+
+```
+
+
+
+## **BƯỚC 4: SAO CHÉP SANG CÁC NODES KHÁC**
+
+
+
+### **4.1 Copy to docker2 và docker3**
+
+```bash
+
+# Tạo script để copy
+
+cat > ~/copy-to-nodes.sh <<'EOF'
+
+#!/bin/bash
+
+echo "Copying lab structure to docker2..."
+
+scp -r ~/docker-lab khai@docker2:~/
+
+
+
+echo "Copying lab structure to docker3..."
+
+scp -r ~/docker-lab khai@docker3:~/
+
+
+
+echo "Copy complete!"
+
+EOF
+
+
+
+chmod +x ~/copy-to-nodes.sh
+
+
+
+# Chạy copy
+
+./copy-to-nodes.sh
+
+```
+
+
+
+## **KIỂM TRA:**
+
+
+
+### **Trên docker1:**
+
+```bash
+
+# Kiểm tra cấu trúc
+
+cd ~/docker-lab
+
+tree -L 3
+
+
+
+# Kết quả mong đợi:
+
+# docker-lab/
+
+# ├── backends
+
+# │   ├── python
+
+# │   │   ├── Dockerfile
+
+# │   │   ├── app.py
+
+# │   │   ├── docker-compose.yml
+
+# │   │   ├── docker-stack.yml
+
+# │   │   ├── requirements.txt
+
+# │   │   └── .env
+
+# ├── frontend
+
+# │   ├── Dockerfile
+
+# │   ├── nginx.conf
+
+# │   ├── package.json
+
+# │   ├── public
+
+# │   └── src
+
+# └── shared
+
+#     └── mysql
+
+#         └── init
+
+```
+
+
+
+**Xong Phase 3!** Đã chuẩn bị source code cho Python stack đầu tiên. Tiếp theo Phase 4: Build và test Python stack.
