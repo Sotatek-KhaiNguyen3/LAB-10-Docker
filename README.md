@@ -1921,7 +1921,7 @@ cat > ~/copy-to-nodes.sh <<'EOF'
 
 echo "Copying lab structure to docker2..."
 
-scp -r ~/docker-lab khai@docker2:~/
+scp -r ~/docker-lab slave@docker2:~/
 
 
 
