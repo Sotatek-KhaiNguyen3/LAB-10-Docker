@@ -1659,7 +1659,7 @@ services:
 
   mysql:
 
-    image: mysql:8
+    image: 192.168.230.190:5000/mysql:8
 
     deploy:
 
@@ -1701,7 +1701,7 @@ services:
 
   backend:
 
-    image: notes-backend-python:latest
+    image: 192.168.230.190:5000/notes-backend-python:v1
 
     deploy:
 
@@ -1747,7 +1747,7 @@ services:
 
   frontend:
 
-    image: notes-frontend:latest
+    image: 192.168.230.190:5000/notes-frontend:v1
 
     deploy:
 
@@ -2241,37 +2241,145 @@ npm start &
 
 
 
-### **4.1 Đẩy images đến các nodes**
+### **4.1 Setup Docker Registry (trên docker1)**
 
 ```bash
 
-# Cách 1: Build trên từng node (đơn giản cho lab)
+# Trên docker1 (manager) - Chạy Docker Registry container
 
-# Trên docker2 và docker3, cũng build images tương tự
+docker run -d \
 
-# Hoặc dùng Docker registry (phức tạp hơn)
+  --name registry \
 
+  -p 5000:5000 \
 
+  --restart always \
 
-# SSH vào docker2 và build
-
-ssh khai@docker2 "cd ~/docker-lab/frontend && docker build -t notes-frontend:latest ."
-
-ssh khai@docker2 "cd ~/docker-lab/backends/python && docker build -t notes-backend-python:latest ."
+  registry:2
 
 
 
-# SSH vào docker3 và build
+# Kiểm tra registry đã chạy
 
-ssh khai@docker3 "cd ~/docker-lab/frontend && docker build -t notes-frontend:latest ."
+curl http://localhost:5000/v2/_catalog
 
-ssh khai@docker3 "cd ~/docker-lab/backends/python && docker build -t notes-backend-python:latest ."
+
+
+# Kết quả mong đợi: {"repositories":[]}
 
 ```
 
 
 
-### **4.2 Deploy stack lên Swarm**
+### **4.2 Tag và Push images lên Registry**
+
+```bash
+
+# Trên docker1 - Tag images với registry address
+
+docker tag notes-frontend:latest localhost:5000/notes-frontend:v1
+
+docker tag notes-backend-python:latest localhost:5000/notes-backend-python:v1
+
+docker tag mysql:8 localhost:5000/mysql:8
+
+
+
+# Push lên registry
+
+docker push localhost:5000/notes-frontend:v1
+
+docker push localhost:5000/notes-backend-python:v1
+
+docker push localhost:5000/mysql:8
+
+
+
+# Kiểm tra images đã push
+
+curl http://localhost:5000/v2/_catalog
+
+
+
+# Kết quả mong đợi: {"repositories":["mysql","notes-backend-python","notes-frontend"]}
+
+```
+
+
+
+### **4.3 Cấu hình Docker daemon trên tất cả nodes để trust registry**
+
+```bash
+
+# Trên docker1, docker2, docker3 - Cấu hình insecure registry
+
+sudo tee /etc/docker/daemon.json << 'EOF'
+
+{
+
+  "insecure-registries": ["192.168.230.190:5000"]
+
+}
+
+EOF
+
+
+
+# Khởi động lại Docker trên từng node
+
+sudo systemctl restart docker
+
+
+
+# Kiểm tra cấu hình đã áp dụng
+
+docker info | grep -A 5 "Insecure Registries"
+
+```
+
+
+
+### **4.4 Pull images từ Registry trên worker nodes (tùy chọn)**
+
+```bash
+
+# Trên docker2 và docker3 - Pull images từ registry để tăng tốc deployment
+
+# Swarm sẽ tự động pull nếu không có, nhưng pull trước giúp deployment nhanh hơn
+
+
+
+# SSH vào docker2
+
+ssh khai@docker2 "docker pull 192.168.230.190:5000/notes-frontend:v1"
+
+ssh khai@docker2 "docker pull 192.168.230.190:5000/notes-backend-python:v1"
+
+ssh khai@docker2 "docker pull 192.168.230.190:5000/mysql:8"
+
+
+
+# SSH vào docker3
+
+ssh khai@docker3 "docker pull 192.168.230.190:5000/notes-frontend:v1"
+
+ssh khai@docker3 "docker pull 192.168.230.190:5000/notes-backend-python:v1"
+
+ssh khai@docker3 "docker pull 192.168.230.190:5000/mysql:8"
+
+
+
+# Kiểm tra images đã pull
+
+ssh khai@docker2 "docker images | grep 192.168.230.190:5000"
+
+ssh khai@docker3 "docker images | grep 192.168.230.190:5000"
+
+```
+
+
+
+### **4.5 Deploy stack lên Swarm**
 
 ```bash
 
@@ -2281,7 +2389,7 @@ cd ~/docker-lab/backends/python
 
 
 
-# Deploy stack
+# Deploy stack với registry images
 
 docker stack deploy -c docker-stack.yml notes-python
 
@@ -2293,19 +2401,21 @@ docker stack services notes-python
 
 
 
-# Kiểm tra tasks phân bổ
+# Kết quả mong đợi:
 
-docker service ps notes-python_backend
+# ID             NAME                       MODE         REPLICAS   IMAGE                                               PORTS
 
-docker service ps notes-python_frontend
+# xxx            notes-python_backend       replicated   3/3        192.168.230.190:5000/notes-backend-python:v1
 
-docker service ps notes-python_mysql
+# yyy            notes-python_frontend      replicated   2/2        192.168.230.190:5000/notes-frontend:v1              *:5000->80/tcp
+
+# zzz            notes-python_mysql         replicated   1/1        192.168.230.190:5000/mysql:8
 
 ```
 
 
 
-### **4.3 Kiểm tra Swarm deployment**
+### **4.6 Kiểm tra Swarm deployment**
 
 ```bash
 
@@ -2321,7 +2431,7 @@ docker service logs notes-python_backend
 
 
 
-# Scale backend service
+# Scale backend service nếu cần
 
 docker service scale notes-python_backend=5
 
@@ -2348,8 +2458,6 @@ docker service ps notes-python_backend
 echo "Frontend URL: http://192.168.230.190:5000"
 
 echo "Backend API: http://192.168.230.190:5000/api/health"
-
-echo "phpMyAdmin: http://192.168.230.190:8081"
 
 ```
 
@@ -2395,27 +2503,33 @@ done | sort | uniq -c
 
 ```bash
 
-# 1. Kiểm tra network
+# 1. Kiểm tra registry
+
+curl http://192.168.230.190:5000/v2/_catalog
+
+
+
+# 2. Kiểm tra network
 
 docker network ls | grep notes-network-overlay
 
 
 
-# 2. Kiểm tra volumes
+# 3. Kiểm tra volumes
 
 docker volume ls | grep mysql
 
 
 
-# 3. Kiểm tra các nodes có images
+# 4. Kiểm tra các nodes có pull được images từ registry
 
-ssh docker2 "docker images | grep notes-"
+ssh docker2 "docker pull 192.168.230.190:5000/notes-frontend:v1"
 
-ssh docker3 "docker images | grep notes-"
+ssh docker3 "docker pull 192.168.230.190:5000/notes-frontend:v1"
 
 
 
-# 4. Xem detailed logs
+# 5. Xem detailed logs
 
 docker service logs --tail 100 notes-python_backend
 
@@ -2423,7 +2537,7 @@ docker service logs --tail 100 notes-python_mysql
 
 
 
-# 5. Kiểm tra service health
+# 6. Kiểm tra service health
 
 docker service inspect --pretty notes-python_backend
 
@@ -2450,6 +2564,12 @@ docker network create -d overlay --attachable notes-network-overlay
 # Nếu volume không tồn tại
 
 docker volume create mysql_data_python
+
+
+
+# Nếu registry không trust được
+
+sudo systemctl restart docker  # Trên tất cả nodes sau khi sửa daemon.json
 
 ```
 
