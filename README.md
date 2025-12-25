@@ -110,7 +110,7 @@ sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-
 sudo chmod +x /usr/local/bin/docker-compose
 
 # Kiểm tra
-docker-compose --version
+docker compose --version
 ```
 
 ### **Bước 8: Tạo cấu trúc thư mục cho lab**
@@ -2087,13 +2087,13 @@ cd ~/docker-lab/backends/python
 
 # Chạy services
 
-docker-compose up -d
+docker compose up -d
 
 
 
 # Kiểm tra services đang chạy
 
-docker-compose ps
+docker compose ps
 
 
 
@@ -2117,19 +2117,19 @@ docker-compose ps
 
 # Xem logs MySQL (kiểm tra init script chạy)
 
-docker-compose logs mysql | tail -20
+docker compose logs mysql | tail -20
 
 
 
 # Xem logs Python backend
 
-docker-compose logs backend | tail -20
+docker compose logs backend | tail -20
 
 
 
 # Xem tất cả logs
 
-docker-compose logs -f
+docker compose logs -f
 
 ```
 
@@ -2469,17 +2469,17 @@ docker stack rm notes-python
 
 
 
-# Dừng docker-compose
+# Dừng docker compose
 
 cd ~/docker-lab/backends/python
 
-docker-compose down
+docker compose down
 
 
 
 # Xóa volumes (cẩn thận - mất data)
 
-docker-compose down -v
+docker compose down -v
 
 ```
 
